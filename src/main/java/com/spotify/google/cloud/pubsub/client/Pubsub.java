@@ -37,7 +37,9 @@ import com.ning.http.client.HttpResponseHeaders;
 import com.ning.http.client.HttpResponseStatus;
 import com.ning.http.client.Request;
 import com.ning.http.client.RequestBuilder;
+import com.ning.http.client.providers.netty.NettyAsyncHttpProviderConfig;
 
+import org.jboss.netty.channel.socket.nio.NioClientSocketChannelFactory;
 import org.jboss.netty.handler.codec.http.HttpMethod;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -102,11 +104,9 @@ public class Pubsub implements Closeable {
   private final Credential credential;
   private final CompletableFuture<Void> closeFuture = new CompletableFuture<>();
 
-  private final ScheduledExecutorService scheduler = getExitingScheduledExecutorService(
-      new ScheduledThreadPoolExecutor(1));
+  private final ScheduledExecutorService scheduler;
 
-  private final ExecutorService executor = getExitingExecutorService(
-      (ThreadPoolExecutor) Executors.newCachedThreadPool());
+  private final ExecutorService executor;
 
   private volatile String accessToken;
   private final int compressionLevel;
@@ -153,6 +153,20 @@ public class Pubsub implements Closeable {
     }
 
     this.baseUri = builder.uri.toString();
+
+    if (builder.scheduler == null) {
+        this.scheduler = getExitingScheduledExecutorService(
+                new ScheduledThreadPoolExecutor(1));
+    } else {
+        this.scheduler = builder.scheduler;
+    }
+    
+    if (builder.executor == null) {
+        this.executor = getExitingExecutorService(
+                (ThreadPoolExecutor) Executors.newCachedThreadPool());
+    } else {
+        this.executor = builder.scheduler;
+    }
 
     // Get initial access token
     refreshAccessToken();
@@ -965,6 +979,10 @@ public class Pubsub implements Closeable {
     private URI uri = DEFAULT_URI;
     private int compressionLevel = Deflater.DEFAULT_COMPRESSION;
 
+    private ExecutorService executor;
+
+    private ScheduledExecutorService scheduler;
+
     private Builder() {
     }
 
@@ -1111,6 +1129,24 @@ public class Pubsub implements Closeable {
       checkArgument(uri.getRawFragment() == null, "illegal service uri: %s", uri);
       this.uri = uri;
       return this;
+    }
+    
+    public Builder executor(final ExecutorService executor) {
+        checkNotNull(executor, "executor");
+        this.executor = executor;
+        this.clientConfig.setExecutorService(executor);
+        
+        NettyAsyncHttpProviderConfig nettyAsyncHttpProviderConfig = new NettyAsyncHttpProviderConfig();
+        nettyAsyncHttpProviderConfig.setSocketChannelFactory(new NioClientSocketChannelFactory(executor, executor, 1, 1));
+
+        this.clientConfig.setAsyncHttpClientProviderConfig(nettyAsyncHttpProviderConfig);
+        return this;
+    }
+    
+    public Builder scheduler(final ScheduledExecutorService scheduler) {
+        checkNotNull(scheduler, "scheduler");
+        this.scheduler = scheduler;
+        return this;
     }
   }
 }
